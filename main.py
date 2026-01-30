@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from fido2.hid import CtapHidDevice
 from fido2.ctap2 import Ctap2, ClientPin
+from fido2.ctap import CtapError
 from fido2.utils import sha256, hmac_sha256
 from secrets import token_bytes
 import json
@@ -18,8 +19,14 @@ from cryptography.hazmat.backends import default_backend
 # configuration constants
 rpID = 'fido-gh-authz'
 
-with open('credentials.json', 'r') as f:
-    credentials = json.load(f)
+try:
+    with open('credentials.json', 'r') as f:
+        credentials = json.load(f)
+except FileNotFoundError:
+    print("credentials.json not found. Creating empty credentials file.")
+    credentials = {}
+    with open('credentials.json', 'w') as f:
+        json.dump(credentials, f)
 
 def getDevice():
     devices = list(CtapHidDevice.list_devices())
@@ -63,8 +70,11 @@ async def delete_branch(params: ghToolParams) -> dict:
         record["transaction"]["signature"] = bytes.hex(assertion.signature)
         record["transaction"]["credential_id"] = bytes.hex(assertion.credential['id'])
         record["transaction"]["user_id"] = bytes.hex(assertion.user['id'])
+        # Find the credential in our store
+        credential_found = False
         for cred in credentials:
             if bytes.fromhex(credentials[cred]["user_id"]) == assertion.user['id'] and bytes.fromhex(credentials[cred]["credential_id"]) == assertion.credential['id']:
+                credential_found = True
                 # Verify ECDSA signature
                 try:
                     x = int(credentials[cred]["public_key"]["x"], 16)
@@ -85,11 +95,21 @@ async def delete_branch(params: ghToolParams) -> dict:
                     record["transaction"]["verified"] = False
                     record["transaction"]["verification_error"] = str(verify_error)
         print("\033[96m" + yaml.dump(record, default_flow_style=False) + "\033[0m")
+        if not credential_found:
+            print("No matching credential found in credential store.")
+            return {"result": "fail", "reason": "credential not found"}
         if record["transaction"]["verified"] == False:
             print("Signature verification failed. Aborting operation.")
             return {"result": "fail", "reason": "signature verification failed"}
         # Here you would add the actual GitHub API call to delete the branch
-        print(f"Branch '{params.branch}' in repository '{params.repo}' deleted successfully.")
+        print(f"Deleting branch '{params.branch}' in repository '{params.repo}'....")
+    except CtapError as e:
+        if e.code == 0x2E:  # NO_CREDENTIALS
+            print("No credentials found on security key for this RP ID.")
+            return {"result": "fail", "reason": "no credentials on device"}
+        else:
+            print(f"CTAP error occurred: {e.code:#x} - {e}")
+            return {"result": "fail", "reason": f"CTAP error {e.code:#x}"}
     except Exception as e:
         print(f"Error occurred: {type(e).__name__}: {e}")
         import traceback
