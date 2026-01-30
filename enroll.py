@@ -6,6 +6,7 @@ Insert a FIDO2 security key in a USB port, and run with:
 
 from fido2.hid import CtapHidDevice
 from fido2.ctap2 import Ctap2, ClientPin
+from fido2.ctap import CtapError
 from fido2.utils import sha256, hmac_sha256
 from getpass import getpass
 from secrets import token_bytes
@@ -21,8 +22,14 @@ parser.add_argument('--username', dest='username', required=True, help='username
 args = parser.parse_args()
 user_name = args.username
 
-with open('credentials.json', 'r') as f:
-    credentials = json.load(f)
+try:
+    with open('credentials.json', 'r') as f:
+        credentials = json.load(f)
+except FileNotFoundError:
+    print("credentials.json not found. Creating empty credentials file.")
+    credentials = {}
+    with open('credentials.json', 'w') as f:
+        json.dump(credentials, f)
 
 devices = list(CtapHidDevice.list_devices())
 if not devices:
@@ -36,7 +43,21 @@ client_data_hash = sha256(token_bytes(32))
 
 pin = getpass("Enter your security key PIN: ")
 client_pin = ClientPin(ctap)
-pin_token = client_pin.get_pin_token(pin)
+try:
+    pin_token = client_pin.get_pin_token(pin)
+except CtapError as e:
+    if e.code == 0x31:  # PIN_INVALID
+        print("Error: Incorrect PIN.")
+        exit(1)
+    elif e.code == 0x32:  # PIN_BLOCKED
+        print("Error: PIN blocked. Too many incorrect attempts.")
+        exit(1)
+    elif e.code == 0x34:  # PIN_AUTH_BLOCKED
+        print("Error: PIN authentication blocked. Remove and reinsert the security key.")
+        exit(1)
+    else:
+        print(f"Error: CTAP error {e.code:#x} - {e}")
+        exit(1)
 pin_auth = hmac_sha256(pin_token, client_data_hash)
 if user_name in credentials:
     user_id = bytes.fromhex(credentials[user_name]["user_id"])
