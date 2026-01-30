@@ -11,6 +11,9 @@ from fido2.utils import sha256, hmac_sha256
 from secrets import token_bytes
 import json
 import yaml
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
 
 # configuration constants
 rpID = 'fido-gh-authz'
@@ -62,10 +65,31 @@ async def delete_branch(params: ghToolParams) -> dict:
         record["transaction"]["user_id"] = bytes.hex(assertion.user['id'])
         for cred in credentials:
             if bytes.fromhex(credentials[cred]["user_id"]) == assertion.user['id'] and bytes.fromhex(credentials[cred]["credential_id"]) == assertion.credential['id']:
-                # TODO: verify signature ...
-                record["transaction"]["verified"] = True
-                record["transaction"]["credential_name"] = cred
+                # Verify ECDSA signature
+                try:
+                    x = int(credentials[cred]["public_key"]["x"], 16)
+                    y = int(credentials[cred]["public_key"]["y"], 16)
+                    public_numbers = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1())
+                    public_key = public_numbers.public_key(default_backend())
+                    
+                    # Verify signature over auth_data + client_data_hash
+                    signed_data = assertion.auth_data + sha256(datatobesigned)
+                    public_key.verify(
+                        assertion.signature,
+                        signed_data,
+                        ec.ECDSA(hashes.SHA256())
+                    )
+                    record["transaction"]["verified"] = True
+                    record["transaction"]["credential_name"] = cred
+                except Exception as verify_error:
+                    record["transaction"]["verified"] = False
+                    record["transaction"]["verification_error"] = str(verify_error)
         print("\033[96m" + yaml.dump(record, default_flow_style=False) + "\033[0m")
+        if record["transaction"]["verified"] == False:
+            print("Signature verification failed. Aborting operation.")
+            return {"result": "fail", "reason": "signature verification failed"}
+        # Here you would add the actual GitHub API call to delete the branch
+        print(f"Branch '{params.branch}' in repository '{params.repo}' deleted successfully.")
     except Exception as e:
         print(f"Error occurred: {type(e).__name__}: {e}")
         import traceback
