@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import asyncio
 import sys
 from copilot import CopilotClient
@@ -45,7 +46,7 @@ class ghToolParams(BaseModel):
     branch: str = Field(description="The name of the branch to operate on")
 
 
-@define_tool(description="Create and delete GitHub repository branches")
+@define_tool(description="Delete GitHub repository branches")
 async def delete_branch(params: ghToolParams) -> dict:
     nonce = token_bytes(32)
     datatobesigned = json.dumps({

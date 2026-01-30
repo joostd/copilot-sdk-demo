@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """
 Register a resident FIDO credential, using USB
 Insert a FIDO2 security key in a USB port, and run with:
